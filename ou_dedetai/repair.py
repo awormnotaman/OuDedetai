@@ -122,7 +122,7 @@ def detect_and_recover(ephemeral_config: EphemeralConfiguration):
         return
 
     if detected_failure == FailureType.FailedUpgrade:
-        logging.info(f"{persistent_config.faithlife_product_release=}") 
+        logging.info(f"{persistent_config.faithlife_product_release=}")
         # Ensure that the target release is unset before installing
         # This will force the user to install the latest version
         # rather than the version they initially installed at (which may be very old)
@@ -130,7 +130,14 @@ def detect_and_recover(ephemeral_config: EphemeralConfiguration):
         persistent_config.write_config()
 
         def _run(app: App):
-            app.status(f"Recovering {persistent_config.faithlife_product} after failed upgrade") 
+            # Warn the user before attempting recovery
+            if not app.approve(
+                "A failed upgrade was detected. "
+                "It's recommended to backup your data before recovery. Continue?"
+            ):
+                app.status("Recovery cancelled by user.")
+                return
+            app.status(f"Recovering {persistent_config.faithlife_product} after failed upgrade")
             # Wait for a second so user can see this message
             time.sleep(1)
             ou_dedetai.installer.install(app)

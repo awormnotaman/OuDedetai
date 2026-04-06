@@ -658,12 +658,14 @@ class Config:
 
     @property
     def faithlife_product(self) -> str:
-        question = "Choose which FaithLife product the script should install: "
-        options = constants.FAITHLIFE_PRODUCTS
+        if self._raw.faithlife_product is None:
+            # Default to "Logos" (most common choice) without prompting.
+            # Users installing Verbum can change this in settings.
+            self.faithlife_product = "Logos"
         return self._ask_if_not_found(
             "faithlife_product",
-            question,
-            options,
+            "Choose which FaithLife product the script should install: ",
+            constants.FAITHLIFE_PRODUCTS,
             [
                 "faithlife_product_version",
                 "faithlife_product_release"
@@ -881,16 +883,9 @@ class Config:
         """Returns absolute path to the wine binary"""
         output = self._raw.wine_binary
         if output is None:
-            question = (
-                f"Which Wine AppImage or binary should the script use to install {self.faithlife_product} "
-                f"v{self.faithlife_product_version} in {self.install_dir}?: "
-            )
-            options = utils.get_wine_options(self.app)
-
-            choice = self.app.ask(question, options)
-
-            output = choice
-            self.wine_binary = choice
+            # Default to Recommended (safest choice for most users)
+            self.wine_binary = constants.WINE_RECOMMENDED_SIGIL
+            output = self._raw.wine_binary
         # Return the full path so we the callee doesn't need to think about it
         if (
             self._raw.wine_binary is not None 

@@ -181,7 +181,8 @@ def check_system_compatibility(app: App):
     try:
         check_for_known_bugs(app=app)
     except Exception:
-        logging.exception("Failed to check for known bugs - assuming everything is fine and continuing install.")
+        logging.exception("Failed to check for known bugs.")
+        app.status("Warning: could not verify system compatibility. Proceeding anyway.")
     if (
         app.conf.faithlife_product_version != '9'
         and not str(app.conf.wine_binary).lower().endswith('appimage')
@@ -370,12 +371,37 @@ def ensure_product_installed(app: App):
         process = wine.install_msi(app)
         if process:
             process.wait()
-    
+
     # Clear installed version cache
     app.conf._installed_faithlife_product_release = None
 
     # Clean up temp files, etc.
     utils.clean_all()
+
+    # Post-install health check
+    if app.is_installed():
+        logging.debug("Post-install check: product executable found.")
+        # Verify Wine can query the registry
+        try:
+            reg_result = wine.wine_reg_query(
+                app,
+                "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion",
+                "ProgramFilesDir"
+            )
+            if reg_result is not None:
+                logging.debug("Post-install check: Wine registry is accessible.")
+                app.status("Installation successful!")
+            else:
+                logging.warning("Post-install check: Wine registry query returned no result.")
+                app.status("Installation may have issues: could not verify Wine registry.")
+        except Exception as e:
+            logging.warning(f"Post-install check: Wine registry query failed: {e}")
+            app.status("Installation may have issues: Wine registry check failed.")
+    else:
+        app.status(
+            f"Installation may have issues: {app.conf.faithlife_product} executable not found. "
+            "Try deleting the wine prefix and reinstalling."
+        )
 
     logging.debug(f"> {app.conf.logos_exe=}")
 
