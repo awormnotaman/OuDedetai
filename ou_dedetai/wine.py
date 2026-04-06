@@ -129,27 +129,34 @@ def check_wine_rules(
     # Does not check for Staging. Will not implement: expecting merging of
     # commits in time.
     logging.debug(f"Checking {wine_release} for {release_version}.")
-    if faithlife_product_version == "10":
-        if release_version is not None and Version(release_version) < Version("30.0.0.0"): 
+    if faithlife_product_version == "9":
+        required_wine_minimum = [7, 0]
+    elif faithlife_product_version == "10":
+        if release_version is not None and Version(release_version) < Version("30.0.0.0"):
             required_wine_minimum = [7, 18]
         else:
             required_wine_minimum = [9, 10]
-    elif faithlife_product_version == "9":
-        required_wine_minimum = [7, 0]
     else:
-        raise ValueError(
-            "Invalid target version, expecting 9 or 10 but got: "
-            f"{faithlife_product_version} ({type(faithlife_product_version)})"
+        # For any future product versions (11+), use the highest known minimum.
+        logging.warning(
+            f"Unknown product version '{faithlife_product_version}', "
+            f"using Wine 9.10 as minimum requirement."
         )
+        required_wine_minimum = [9, 10]
 
+    # The latest known rule is used as a fallback for future Wine versions.
+    latest_known_rule = WineRule(
+        major=10, proton=False, minor_bad=[],
+        allowed_releases=["stable", "devel", "staging"]
+    )
     rules: list[WineRule] = [
         # Proton release tend to use the x.0 release, but can include changes found in devel/staging
         # exceptions to minimum
         WineRule(major=7, proton=True, minor_bad=[], allowed_releases=["staging"]),
         # devel permissible at this point
-        WineRule(major=8, proton=False, minor_bad=[0], allowed_releases=["staging"], devel_allowed=16), 
-        WineRule(major=9, proton=False, minor_bad=[], allowed_releases=["devel", "staging"]),  
-        WineRule(major=10, proton=False, minor_bad=[], allowed_releases=["stable", "devel", "staging"]) 
+        WineRule(major=8, proton=False, minor_bad=[0], allowed_releases=["staging"], devel_allowed=16),
+        WineRule(major=9, proton=False, minor_bad=[], allowed_releases=["devel", "staging"]),
+        latest_known_rule,
     ]
 
     major_min, minor_min = required_wine_minimum
@@ -158,50 +165,65 @@ def check_wine_rules(
         minor = wine_release.minor
         release_type = wine_release.release
         result = True, "None"  # Whether the release is allowed; error message
+        # Find the matching rule, or fall back to the latest known rule for
+        # future Wine versions (11+, etc.)
+        matched_rule = None
         for rule in rules:
             if major == rule.major:
-                # Verify release is allowed
-                if release_type not in rule.allowed_releases:
-                    if minor >= (rule.devel_allowed or float('inf')):
-                        if release_type not in ["staging", "devel"]:
-                            result = (
-                                False,
-                                (
-                                    f"Wine release needs to be devel or staging. "
-                                    f"Current release: {release_type}."
-                                )
-                            )
-                            break
-                    else:
-                        result = (
-                            False,
-                            (
-                                f"Wine release needs to be {rule.allowed_releases}. "
-                                f"Current release: {release_type}."
-                            )
-                        )
-                        break
-                # Verify version is allowed
-                if minor in rule.minor_bad:
-                    result = False, f"Wine version {major}.{minor} will not work."
-                    break
-                if major < major_min:
+                matched_rule = rule
+                break
+        if matched_rule is None:
+            if major > latest_known_rule.major:
+                logging.info(
+                    f"Wine {major}.{minor} is newer than latest known version "
+                    f"({latest_known_rule.major}). Assuming compatible."
+                )
+                matched_rule = latest_known_rule
+            else:
+                result = (
+                    False,
+                    f"Wine version {major}.{minor} is not recognized and too old."
+                )
+                logging.debug(f"Result: {result}")
+                return result
+
+        # Verify release is allowed
+        if release_type not in matched_rule.allowed_releases:
+            if minor >= (matched_rule.devel_allowed or float('inf')):
+                if release_type not in ["staging", "devel"]:
                     result = (
                         False,
                         (
-                            f"Wine version {major}.{minor} is "
-                            f"below minimum required ({major_min}.{minor_min}).")
-                    )
-                    break
-                elif major == major_min and minor < minor_min:
-                    if not rule.proton:
-                        result = (
-                            False,
-                            (
-                                f"Wine version {major}.{minor} is "
-                                f"below minimum required ({major_min}.{minor_min}).")
+                            f"Wine release needs to be devel or staging. "
+                            f"Current release: {release_type}."
                         )
-                        break
+                    )
+            else:
+                result = (
+                    False,
+                    (
+                        f"Wine release needs to be {matched_rule.allowed_releases}. "
+                        f"Current release: {release_type}."
+                    )
+                )
+        # Verify version is allowed
+        elif minor in matched_rule.minor_bad:
+            result = False, f"Wine version {major}.{minor} will not work."
+        elif major < major_min:
+            result = (
+                False,
+                (
+                    f"Wine version {major}.{minor} is "
+                    f"below minimum required ({major_min}.{minor_min}).")
+            )
+        elif major == major_min and minor < minor_min:
+            if not matched_rule.proton:
+                result = (
+                    False,
+                    (
+                        f"Wine version {major}.{minor} is "
+                        f"below minimum required ({major_min}.{minor_min}).")
+                )
         logging.debug(f"Result: {result}")
         return result
     else:
@@ -243,14 +265,20 @@ def initializeWineBottle(wine64_binary: str, app: App):
     # Avoid wine-mono window
     wine_dll_override="mscoree="
     logging.debug(f"Running: {wine64_binary} wineboot --init")
-    run_wine_during_install(
-        app=app,
-        wine_binary=wine64_binary,
-        exe='wineboot',
-        exe_args=['--init'],
-        init=True,
-        additional_wine_dll_overrides=wine_dll_override
-    )
+    try:
+        run_wine_during_install(
+            app=app,
+            wine_binary=wine64_binary,
+            exe='wineboot',
+            exe_args=['--init'],
+            init=True,
+            additional_wine_dll_overrides=wine_dll_override
+        )
+    except subprocess.CalledProcessError:
+        app.exit(
+            "Failed to initialize the Wine bottle. "
+            "Try deleting the wine prefix directory and retrying the install."
+        )
 
 
 def set_win_version(app: App, exe: str, windows_version: str):
@@ -414,14 +442,26 @@ def install_msi(app: App):
 
     # Add MST transform if needed
     release_version = app.conf.installed_faithlife_product_release or app.conf.faithlife_product_release
-    if release_version is not None and Version(release_version) > Version("39.0.0.0"): 
+    if release_version is not None and Version(release_version) > Version("39.0.0.0"):
         # Define MST path and transform to windows path.
         mst_path = constants.APP_ASSETS_DIR / "LogosStubFailOK.mst"
-        transform_winpath = run_wine_completed_process(
+        if not mst_path.is_file():
+            logging.error(f"MST transform file not found: {mst_path}")
+            app.exit(f"Required MST transform file missing: {mst_path}")
+            return None
+        winepath_result = run_wine_completed_process(
             app=app,
             wine_binary=wine_binary,
-            exe_args=['winepath', '-w', mst_path]
-        ).stdout.rstrip()
+            exe_args=['winepath', '-w', str(mst_path)]
+        )
+        if winepath_result.returncode != 0:
+            logging.error(
+                f"winepath failed (exit {winepath_result.returncode}): "
+                f"{winepath_result.stderr.rstrip()}"
+            )
+            app.exit("Failed to convert MST path to Windows format via winepath.")
+            return None
+        transform_winpath = winepath_result.stdout.rstrip()
         exe_args.append(f'TRANSFORMS={transform_winpath}')
         logging.debug(f"TRANSFORMS windows path added: {transform_winpath}")
 
@@ -430,9 +470,26 @@ def install_msi(app: App):
     result = run_wine_during_install(app, wine_binary, exe="msiexec", exe_args=exe_args)
     if result is not None:
         # Wait in order to get the exit status.
-        result.wait()
+        try:
+            result.wait(timeout=600)
+        except subprocess.TimeoutExpired:
+            logging.error("MSI installer timed out after 10 minutes.")
+            result.kill()
+            result.wait()
+            app.exit(
+                "Logos installer timed out. The install may be stuck. "
+                "Try again or run with --debug for more details."
+            )
     if result is None or result.returncode != 0:
-        app.exit("Logos Installer failed.") 
+        returncode = result.returncode if result is not None else "N/A"
+        logging.error(
+            f"MSI installer failed with exit code {returncode}. "
+            f"Check the log for Wine output above."
+        )
+        app.exit(
+            f"Logos installer failed (exit code: {returncode}). "
+            f"Run with --debug for detailed Wine output."
+        )
     return result
 
 
@@ -508,6 +565,7 @@ def run_wine_completed_process(
     exe=None,
     exe_args=None,
     additional_wine_dll_overrides: Optional[str] = None,
+    timeout: int = 300,
 ) -> subprocess.CompletedProcess[str]:
     """Like run_wine_proc but outputs a CompletedProcess
     and sets it's output to text
@@ -525,6 +583,7 @@ def run_wine_completed_process(
         env=system.fix_ld_library_path(env),
         capture_output=True,
         text=True,
+        timeout=timeout,
     )
 
 
@@ -643,7 +702,13 @@ def run_wine_during_install(
             else:
                 full_command_string = f"{wine_binary} {" ".join(exe_args)}"
             logging.debug(f"Waiting on: {full_command_string}")
-            process.wait()
+            try:
+                process.wait(timeout=1800)
+            except subprocess.TimeoutExpired:
+                logging.error(f"Wine process timed out after 30 minutes: {full_command_string}")
+                process.kill()
+                process.wait()
+                raise
             logging.debug(f"Wine process {full_command_string} "
                           f"completed with: {process.returncode}. "
                           "Dumping log:")

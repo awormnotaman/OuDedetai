@@ -98,9 +98,12 @@ class UrlProps(Props):
         logging.debug(f"Getting headers from {self.path}.")
         try:
             h = {'Accept-Encoding': 'identity'}  # force non-compressed txfr
-            r = requests.head(self.path, allow_redirects=True, headers=h)
+            r = requests.head(self.path, allow_redirects=True, headers=h, timeout=30)
+        except requests.exceptions.Timeout:
+            logging.critical(f"Request timed out for {self.path}. Check your internet connection.")
+            raise
         except requests.exceptions.ConnectionError:
-            logging.critical("Failed to connect to the server.")
+            logging.critical(f"Failed to connect to the server: {self.path}. Check your internet connection.")
             raise
         except Exception as e:
             logging.error(e)
@@ -494,7 +497,7 @@ def _net_get(url: str, target: Optional[Path]=None, app: Optional[App] = None):
             # One that writes into a file, and one that returns a str, 
             # that share most of the internal logic
             if target_props.path is None:  # return url content as text
-                with requests.get(url_props.path, headers=headers) as r:
+                with requests.get(url_props.path, headers=headers, timeout=30) as r:
                     if callable(r):
                         logging.error("Failed to retrieve data from the URL.")
                         return None
@@ -524,7 +527,7 @@ def _net_get(url: str, target: Optional[Path]=None, app: Optional[App] = None):
 
                     return r._content  # raw bytes
             else:  # download url to target.path
-                with requests.get(url_props.path, stream=True, headers=headers) as r:
+                with requests.get(url_props.path, stream=True, headers=headers, timeout=300) as r:
                     with target_props.path.open(mode=file_mode) as f:
                         if file_mode == 'wb':
                             mode_text = 'Writing'
@@ -547,15 +550,21 @@ def _net_get(url: str, target: Optional[Path]=None, app: Optional[App] = None):
                                         f"Downloading {target_props.path.name}…",
                                         percent
                                     )
+        except requests.exceptions.Timeout:
+            logging.error(
+                f"Download timed out for {url_props.path}. "
+                "Check your internet connection and try again."
+            )
+            return None
         except requests.exceptions.RequestException as e:
             # If this was an incomplete read try again
             new_size = FileProps(target).size
             if (
                 total_size is not None
                 and new_size is not None
-                and new_size < total_size 
+                and new_size < total_size
                 and (
-                    last_size is None 
+                    last_size is None
                     or new_size > last_size
                 )
             ):
@@ -564,7 +573,7 @@ def _net_get(url: str, target: Optional[Path]=None, app: Optional[App] = None):
                 last_size = new_size
                 continue
 
-            logging.error(f"Error occurred during HTTP request: {e}")
+            logging.error(f"Error occurred during HTTP request for {url_props.path}: {e}")
             return None  # Return None values to indicate an error condition
 
 
@@ -671,7 +680,7 @@ def _get_faithlife_product_releases(
     logging.debug(f"Downloading release list for {faithlife_product} {faithlife_product_version}…")
     # NOTE: This assumes that Verbum release numbers continue to mirror Logos.
     if faithlife_product_release_channel == "beta":
-        url = "https://clientservices.logos.com/update/v1/feed/logos10/beta.xml"
+        url = f"https://clientservices.logos.com/update/v1/feed/logos{faithlife_product_version}/beta.xml"
     else:
         url = f"https://clientservices.logos.com/update/v1/feed/logos{faithlife_product_version}/stable.xml"
     
@@ -697,12 +706,7 @@ def _get_faithlife_product_releases(
         # if len(releases) == 5:
         #    break
 
-    #Filtering not needed at the moment but left here in case we want it later.
-    #Double check this works before releasing.
-    #from packaging.versions import Version
-    #filtered_releases = [version for version in releases if Version("40.0.0.0") > Version(version)]
-    #logging.debug(f"Available releases: {', '.join(releases)}")
-    #logging.debug(f"Filtered releases: {', '.join(filtered_releases)}")
+    logging.debug(f"Available releases: {', '.join(releases)}")
 
     return releases
 
@@ -714,26 +718,58 @@ def update_lli_binary(app: App):
     logging.debug(
         f"Updating {constants.APP_NAME} to latest version by overwriting: {lli_file_path}")
 
+    # Check if the binary path is writable
+    if not os.access(lli_file_path, os.W_OK):
+        logging.error(
+            f"Cannot update: {lli_file_path} is not writable. "
+            "If running as a snap or flatpak, update through your package manager instead."
+        )
+        return
+
     # Remove existing downloaded file if different version.
     if lli_download_path.is_file():
         logging.info("Checking if existing LLI binary is latest version.")
-        lli_download_ver = utils.get_lli_release_version(lli_download_path)
+        try:
+            lli_download_ver = utils.get_lli_release_version(lli_download_path)
+        except Exception as e:
+            logging.warning(f"Could not determine version of downloaded binary: {e}")
+            lli_download_ver = None
         if not lli_download_ver or lli_download_ver != app.conf.app_latest_version:
             logging.info(f"Removing \"{lli_download_path}\", version: {lli_download_ver}")
             # Remove incompatible file.
             lli_download_path.unlink()
 
-    logos_reuse_download(
-        app.conf.app_latest_version_url,
-        constants.BINARY_NAME,
-        app.conf.download_dir,
-        app=app,
-    )
+    try:
+        logos_reuse_download(
+            app.conf.app_latest_version_url,
+            constants.BINARY_NAME,
+            app.conf.download_dir,
+            app=app,
+        )
+    except Exception as e:
+        logging.error(f"Failed to download update: {e}")
+        return
+
+    if not lli_download_path.is_file():
+        logging.error("Download completed but binary file not found.")
+        return
+
+    # Verify the downloaded binary is executable before replacing
     shutil.copy(lli_download_path, temp_path)
+    os.chmod(temp_path, os.stat(temp_path).st_mode | 0o111)
+    try:
+        # Quick sanity check that the binary runs
+        utils.get_lli_release_version(temp_path)
+    except Exception as e:
+        logging.error(f"Downloaded binary appears invalid: {e}")
+        temp_path.unlink(missing_ok=True)
+        return
+
     try:
         shutil.move(temp_path, lli_file_path)
     except Exception as e:
         logging.error(f"Failed to replace the binary: {e}")
+        temp_path.unlink(missing_ok=True)
         return
 
     os.chmod(sys.argv[0], os.stat(sys.argv[0]).st_mode | 0o111)

@@ -226,8 +226,25 @@ class LogosManager:
 
         if pids:
             try:
-                system.run_command(['kill', '-9'] + pids)
-                logging.debug(f"Stopped Logos processes at PIDs {', '.join(pids)}.")
+                # Send SIGTERM first to allow graceful shutdown (prevents Wine registry corruption)
+                system.run_command(['kill', '-15'] + pids)
+                logging.debug(f"Sent SIGTERM to Logos processes at PIDs {', '.join(pids)}.")
+                # Wait up to 5 seconds for processes to exit
+                for _ in range(10):
+                    time.sleep(0.5)
+                    still_alive = []
+                    for pid in pids:
+                        try:
+                            os.kill(int(pid), 0)  # Check if process still exists
+                            still_alive.append(pid)
+                        except OSError:
+                            pass
+                    if not still_alive:
+                        break
+                # Force kill any remaining processes
+                if still_alive:
+                    logging.debug(f"Force killing remaining processes: {', '.join(still_alive)}")
+                    system.run_command(['kill', '-9'] + still_alive)
             except Exception as e:
                 logging.debug(f"Error while stopping Logos processes: {e}.")
         else:
@@ -311,7 +328,23 @@ class LogosManager:
 
             if pids:
                 try:
-                    system.run_command(['kill', '-9'] + pids)
+                    # Send SIGTERM first for graceful shutdown
+                    system.run_command(['kill', '-15'] + pids)
+                    logging.debug(f"Sent SIGTERM to LogosIndexer processes at PIDs {', '.join(pids)}.")
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        still_alive = []
+                        for pid in pids:
+                            try:
+                                os.kill(int(pid), 0)
+                                still_alive.append(pid)
+                            except OSError:
+                                pass
+                        if not still_alive:
+                            break
+                    if still_alive:
+                        logging.debug(f"Force killing remaining indexer processes: {', '.join(still_alive)}")
+                        system.run_command(['kill', '-9'] + still_alive)
                     self.indexing_state = State.STOPPED
                     self.app.status(f"Stopped LogosIndexer processes at PIDs {', '.join(pids)}.")
                 except Exception as e:

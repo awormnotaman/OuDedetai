@@ -54,9 +54,36 @@ def die_if_running(app: App):
     if os.path.isfile(constants.PID_FILE):
         with open(constants.PID_FILE, 'r') as f:
             pid = f.read().strip()
-            message = f"The script is already running on PID {pid}. Should it be killed to allow this instance to run?"
-            if app.approve(message):
-                os.kill(int(pid), signal.SIGKILL)
+        try:
+            pid_int = int(pid)
+        except ValueError:
+            logging.warning(f"Invalid PID in PID file: {pid}. Removing stale PID file.")
+            remove_pid_file()
+            atexit.register(remove_pid_file)
+            with open(constants.PID_FILE, 'w') as f:
+                f.write(str(os.getpid()))
+            return
+
+        # Check if the process is still running and is actually an OuDedetai process
+        try:
+            cmdline_path = f"/proc/{pid_int}/cmdline"
+            if os.path.exists(cmdline_path):
+                with open(cmdline_path, 'r') as cmd_f:
+                    cmdline = cmd_f.read()
+                if constants.BINARY_NAME not in cmdline and "ou_dedetai" not in cmdline:
+                    logging.info(f"PID {pid} is not an OuDedetai process. Removing stale PID file.")
+                    remove_pid_file()
+                else:
+                    message = f"The script is already running on PID {pid}. Should it be killed to allow this instance to run?"
+                    if app.approve(message):
+                        os.kill(pid_int, signal.SIGKILL)
+            else:
+                # Process doesn't exist anymore - stale PID file
+                logging.info(f"PID {pid} no longer exists. Removing stale PID file.")
+                remove_pid_file()
+        except (OSError, PermissionError) as e:
+            logging.warning(f"Could not verify PID {pid}: {e}. Removing stale PID file.")
+            remove_pid_file()
 
     atexit.register(remove_pid_file)
     with open(constants.PID_FILE, 'w') as f:
@@ -117,15 +144,16 @@ def install_dependencies(app: App):
         targetversion = int(app.conf.faithlife_product_version)
     else:
         targetversion = 10
-    app.status(f"Checking {app.conf.faithlife_product} {str(targetversion)} dependencies…") 
+    app.status(f"Checking {app.conf.faithlife_product} {str(targetversion)} dependencies…")
 
-    if targetversion == 10:
-        system.install_dependencies(app, target_version=10)
-    elif targetversion == 9:
+    if targetversion == 9:
         app.status("Logos 9 not supported.", 100)
         app.exit("Logos 9 not supported.", False)
+    elif targetversion >= 10:
+        system.install_dependencies(app, target_version=targetversion)
     else:
-        logging.error(f"Unknown Target version, expecting 10 but got: {app.conf.faithlife_product_version}.") 
+        logging.error(f"Unknown target version: {app.conf.faithlife_product_version}.")
+        app.exit(f"Unsupported product version: {app.conf.faithlife_product_version}.", False)
 
     app.status("Installed dependencies.", 100)
 
@@ -551,8 +579,19 @@ def update_to_latest_recommended_appimage(app: App):
     app.conf.wine_appimage_path = Path(app.conf.wine_appimage_recommended_file_name)
     status, _ = compare_recommended_appimage_version(app)
     if status == 0:
-        # TODO: Consider also removing old appimage from install dir. 
         set_appimage_symlink(app)
+        # Verify the new AppImage is executable and functional
+        appimage_path = app.conf.wine_appimage_path
+        if appimage_path is not None and Path(appimage_path).exists():
+            if not os.access(appimage_path, os.X_OK):
+                os.chmod(appimage_path, os.stat(appimage_path).st_mode | 0o755)
+            # Verify it's a valid AppImage
+            if not check_appimage(appimage_path):
+                logging.error(f"Downloaded AppImage appears invalid: {appimage_path}")
+                return
+            logging.info(f"Successfully updated Wine AppImage to {appimage_path}")
+        else:
+            logging.error("AppImage update failed: file not found after download.")
     elif status == 1:
         logging.debug("The AppImage is already set to the latest recommended.")
     elif status == 2:
