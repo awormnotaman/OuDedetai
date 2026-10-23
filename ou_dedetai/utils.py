@@ -311,7 +311,11 @@ class VersionComparison(enum.Enum):
 
 def compare_logos_linux_installer_version(app: App) -> Optional[VersionComparison]:
     current = Version(constants.LLI_CURRENT_VERSION)
-    latest = Version(app.conf.app_latest_version)
+    try:
+        latest = Version(app.conf.app_latest_version)
+    except network.LatestReleaseUnavailable as e:
+        logging.warning(f"LLI self-update check: {e}")
+        return None
 
     if current < latest:
         # Current release is older than recommended.

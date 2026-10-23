@@ -33,6 +33,7 @@ from . import constants
 from . import control
 from . import gui
 from . import installer
+from . import network
 from . import system
 from . import utils
 from . import wine
@@ -451,7 +452,11 @@ class ControlWindow(GuiApp):
         text = f"Update {constants.APP_NAME}\ncurrent: v{ver}\nlatest: ..." 
         # Spawn a thread to update the label with the current version
         def _update_lli_version():
-            text = f"Update {constants.APP_NAME}\ncurrent: v{ver}\nlatest: v{self.conf.app_latest_version}" 
+            try:
+                latest = f"v{self.conf.app_latest_version}"
+            except network.LatestReleaseUnavailable:
+                latest = "unknown"
+            text = f"Update {constants.APP_NAME}\ncurrent: v{ver}\nlatest: {latest}"
             self.gui.update_lli_label.config(text=text)
             self.update_latest_lli_release_button()
         self.gui.update_lli_button.state(['disabled'])
@@ -723,6 +728,9 @@ class ControlWindow(GuiApp):
         if constants.RUNMODE != 'binary':
             state = 'disabled'
             msg = f"This button is disabled. Can't run self-update from {constants.RUNMODE}."
+        elif result is None:
+            state = 'disabled'
+            msg = "This button is disabled. Couldn't find the latest release."
         elif result == utils.VersionComparison.OUT_OF_DATE:
             state = '!disabled'
         elif result == utils.VersionComparison.UP_TO_DATE:

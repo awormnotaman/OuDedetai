@@ -237,6 +237,17 @@ class CachedRequests:
         return self
 
 
+class LatestReleaseUnavailable(Exception):
+    """Couldn't find a latest release, e.g. offline or the repository has none"""
+
+    def __init__(self, repository: str):
+        super().__init__(
+            f"Couldn't find the latest release of {repository} (are you offline, or does it only have "
+            "pre-releases?)"
+        )
+        self.repository = repository
+
+
 class NetworkRequests:
     """Uses the cache if found, otherwise retrieves the value from the network."""
 
@@ -357,6 +368,11 @@ class NetworkRequests:
                 self._cache.repository_latest_pre_release_version[repository] = result.pre_release.version
                 self._cache.repository_latest_pre_release_url[repository] = result.pre_release.download_url
             self._cache._write()
+        if (
+            repository not in self._cache.repository_latest_version
+            or repository not in self._cache.repository_latest_url
+        ):
+            raise LatestReleaseUnavailable(repository)
         return SoftwareReleaseInfo(
             version=self._cache.repository_latest_version[repository],
             download_url=self._cache.repository_latest_url[repository]

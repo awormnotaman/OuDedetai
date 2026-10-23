@@ -8,6 +8,7 @@ from pathlib import Path
 from packaging.version import InvalidVersion
 
 import ou_dedetai.constants as constants
+import ou_dedetai.network as network
 import ou_dedetai.utils as utils
 from . import REPODIR
 from . import TESTDATADIR
@@ -45,6 +46,16 @@ class TestAppUtils(unittest.TestCase):
         self.app.conf.app_latest_version = '4.0.1'
         result = utils.compare_logos_linux_installer_version(self.app)
         self.assertEqual(result, utils.VersionComparison.OUT_OF_DATE)
+
+    def test_compare_logos_linux_installer_version_unavailable(self):
+        class OfflineConfig:
+            @property
+            def app_latest_version(self):
+                raise network.LatestReleaseUnavailable("FaithLife-Community/OuDedetai")
+
+        constants.LLI_CURRENT_VERSION = '4.0.0-alpha.1'
+        self.app.conf = OfflineConfig()
+        self.assertIsNone(utils.compare_logos_linux_installer_version(self.app))
 
     @unittest.skip("Needs functional wine binary.")
     def test_compare_recommended_appimage_version(self):
