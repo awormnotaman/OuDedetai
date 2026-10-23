@@ -499,7 +499,8 @@ def get_package_manager() -> PackageManager | None:
         # query_command =  ["dnf", "list", "--installed"]
 
         # specifying a format is so we can match exactly on the package name
-        query_command =  ["rpm", "-qa", "--qf", "'%{NAME}'"]
+        # One name per line. No shell runs this, so quotes would be printed literally
+        query_command =  ["rpm", "-qa", "--qf", "%{NAME}\\n"]
         query_prefix = ''
         packages = (
             "fuse fuse-libs "  # appimages
