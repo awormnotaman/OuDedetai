@@ -671,8 +671,11 @@ def run_wine_during_install(
 # Sort of like an update, but for wine and all of the bits underneath "Logos" itself
 def enforce_icu_data_files(app: App):
     app.status("Downloading ICU files…")
-    icu_url = app.conf.icu_latest_version_url
-    icu_latest_version = app.conf.icu_latest_version
+    try:
+        icu_url = app.conf.icu_latest_version_url
+        icu_latest_version = app.conf.icu_latest_version
+    except network.LatestReleaseUnavailable as e:
+        app.exit(f"Can't download the ICU files. {e}")
 
     icu_filename = os.path.basename(icu_url).removesuffix(".tar.gz")
     # Append the version to the file name so it doesn't collide with previous versions
