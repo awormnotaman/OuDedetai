@@ -45,10 +45,18 @@ def fix_ld_library_path(env: Optional[MutableMapping[str, str]]) -> dict[str, st
             lp_orig = env.pop(lp_key + '_ORIG', None)
             if lp_orig is not None:
                 env[lp_key] = lp_orig  # restore the original, unmodified value
-            else:
-                # This happens when LD_LIBRARY_PATH was not set.
-                # Remove the env var as a last resort:
-                env.pop(lp_key, None)
+            elif lp_key in env:
+                # Either LD_LIBRARY_PATH was not set, so pyinstaller set it to just its
+                # bundle, or an earlier call on this env already restored the user's
+                # value. Only drop the bundle, so the user's value survives.
+                paths = [
+                    path for path in env[lp_key].split(os.pathsep)
+                    if os.path.normpath(path) != str(constants.BUNDLE_DIR)
+                ]
+                if paths:
+                    env[lp_key] = os.pathsep.join(paths)
+                else:
+                    env.pop(lp_key)
 
     return env
 
