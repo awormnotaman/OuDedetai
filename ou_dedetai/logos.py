@@ -109,6 +109,8 @@ class LogosManager:
             logging.warning("The user should have installed the Logos application by now and have this populated."
                             " Waiting until that is resolved…")
             while logos_appdata_dir is None:
+                if self.logos_state == State.STOPPED:
+                    return
                 time.sleep(1)
                 logos_appdata_dir = self.app.conf._logos_appdata_dir
         
@@ -121,7 +123,12 @@ class LogosManager:
 
         time_logos_started = time.time()
 
-        while True:
+        # Stop once there's nothing left to watch for, or Logos has closed
+        while (
+            not is_user_logged_in
+            and not sent_trouble_signing_in_message
+            and self.logos_state != State.STOPPED
+        ):
             # Now we wait...
             time.sleep(10)
 
@@ -184,7 +191,8 @@ class LogosManager:
             wine.wineserver_kill(self.app)
             # Don't send "Running" message to GUI b/c it never clears.
             logging.info(f"Running {self.app.conf.faithlife_product}…")
-            self.app.start_thread(self.monitor_for_potential_issues, daemon_bool=False)
+            # Daemon: only offers hints, so it mustn't keep us from exiting
+            self.app.start_thread(self.monitor_for_potential_issues, daemon_bool=True)
             self.app.start_thread(run_logos, daemon_bool=False)
             # NOTE: The following code would keep the CLI open while running
             # Logos, but since wine logging is sent directly to wine.log,
