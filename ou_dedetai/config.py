@@ -1,6 +1,8 @@
 import copy
 import os
+import shutil
 import subprocess
+import tempfile
 from typing import Any, Optional
 from dataclasses import dataclass
 import json
@@ -443,17 +445,35 @@ class PersistentConfiguration:
 
         def write_json_file(config_file_path: str) -> None:
             logging.info(f"Writing config to {config_file_path}")
+            # Write through a symlink (e.g. managed dotfiles) rather than replacing it
+            config_file_path = os.path.realpath(config_file_path)
             os.makedirs(os.path.dirname(config_file_path), exist_ok=True)
+            # Write this into a string first to avoid partial writes
+            # if encoding fails (which it shouldn't)
+            json_str = json.dumps(output, indent=4, sort_keys=True) + '\n'
+            # Then write a temporary file and move it over the config, so a crash or
+            # full disk mid-write can't leave an empty or truncated config behind.
+            temp_path = None
             try:
-                with open(config_file_path, 'w') as config_file:
-                    # Write this into a string first to avoid partial writes
-                    # if encoding fails (which it shouldn't)
-                    json_str = json.dumps(output, indent=4, sort_keys=True)
+                fd, temp_path = tempfile.mkstemp(
+                    dir=os.path.dirname(config_file_path),
+                    prefix=f".{os.path.basename(config_file_path)}.",
+                    suffix=".tmp",
+                )
+                with os.fdopen(fd, 'w') as config_file:
                     config_file.write(json_str)
-                    config_file.write('\n')
+                    config_file.flush()
+                    os.fsync(config_file.fileno())
+                if os.path.exists(config_file_path):
+                    # mkstemp creates it 0600, keep the existing file's permissions
+                    shutil.copymode(config_file_path, temp_path)
+                os.replace(temp_path, config_file_path)
             except IOError as e:
                 logging.error(f"Error writing to file {config_file_path}: {e}")
                 # Continue, the installer can still operate even if it fails to write.
+            finally:
+                if temp_path is not None:
+                    Path(temp_path).unlink(missing_ok=True)
 
         if self.install_dir is not None:
             portable_config_path = os.path.expanduser(self.install_dir + f"/{constants.BINARY_NAME}.json") 
