@@ -1,5 +1,7 @@
+import os
 import queue
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock
@@ -313,9 +315,41 @@ class TestGeneralUtils(unittest.TestCase):
         for s in ["True", "TRUE", "Yes", "Y", "y", "1"]:
             self.assertTrue(utils.parse_bool(s))
 
-    @unittest.skip("Test requires oudedetai binary.")
     def test_restart_lli(self):
-        pass
+        # restart_lli execs sys.executable, so run it in a separate process
+        # whose sys.executable is a script that reports the environment it got.
+        with tempfile.TemporaryDirectory() as td:
+            fake_lli = Path(td) / 'oudedetai'
+            fake_lli.write_text(
+                '#!/bin/sh\n'
+                'echo "reset=$PYINSTALLER_RESET_ENVIRONMENT"\n'
+                'echo "ld=$LD_LIBRARY_PATH"\n'
+            )
+            fake_lli.chmod(0o755)
+            code = (
+                "import sys\n"
+                "from ou_dedetai import constants, utils\n"
+                "constants.RUNMODE = 'binary'\n"
+                "constants.PID_FILE = sys.argv[2]\n"
+                "sys.executable = sys.argv[1]\n"
+                "utils.restart_lli()\n"
+            )
+            env = dict(
+                os.environ,
+                PYTHONPATH=str(REPODIR),
+                LD_LIBRARY_PATH='/pyinstaller/bundle',
+                LD_LIBRARY_PATH_ORIG='/usr/local/lib',
+            )
+            result = subprocess.run(
+                [sys.executable, '-c', code, str(fake_lli), str(Path(td) / 'oudedetai.pid')],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        # The exec gets the reset flag and the original library path
+        self.assertIn('reset=1\n', result.stdout, result.stderr)
+        self.assertIn('ld=/usr/local/lib\n', result.stdout, result.stderr)
 
     @unittest.skip("Test not needed.")
     def test_stopwatch(self):

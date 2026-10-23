@@ -73,7 +73,12 @@ def restart_lli():
     pidfile = Path(constants.PID_FILE)
     if pidfile.is_file():
         pidfile.unlink()
-    os.execv(sys.executable, [sys.executable])
+    env = system.fix_ld_library_path(None)
+    # Since PyInstaller 6.9, running our own executable again is treated as a
+    # worker of this process, reusing our unpacked (now outdated) files.
+    # Ask for a fresh instance instead.
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    os.execve(sys.executable, [sys.executable], env)
     sys.exit()
 
 
