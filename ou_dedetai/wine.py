@@ -75,7 +75,11 @@ def get_devel_or_stable(version: str) -> str:
 def get_wine_release(binary: str) -> tuple[Optional[WineRelease], str]:
     cmd = [binary, "--version"]
     try:
-        version_string = subprocess.check_output(cmd, encoding='utf-8').strip()
+        version_string = subprocess.check_output(
+            cmd,
+            encoding='utf-8',
+            env=system.fix_ld_library_path(None),
+        ).strip()
         logging.debug(f"Version string: {str(version_string)}")
         branch: Optional[str]
         try:

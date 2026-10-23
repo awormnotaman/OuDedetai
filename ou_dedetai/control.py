@@ -2,7 +2,6 @@
 They can be called from CLI, GUI, or TUI.
 """
 
-import copy
 import glob
 import json
 import logging
@@ -152,7 +151,7 @@ def get_support(app: App) -> str:
         if app.conf._raw.wine_binary:
             run_commands += [[app.conf._raw.wine_binary, "--version"]]
 
-        subprocess_env = copy.deepcopy(os.environ)
+        subprocess_env = system.fix_ld_library_path(None)
         # Set LANG to enable support
         subprocess_env["LANG"] = "en_US.UTF-8"
 
