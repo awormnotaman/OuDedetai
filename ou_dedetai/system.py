@@ -791,7 +791,8 @@ def postinstall_dependencies_steamos(superuser_command: str):
     logging.debug("Updating DNS settings & locales, enabling services & read-only system…")
     command = [
         superuser_command, "sed", '-i',
-        's/mymachines resolve/mymachines mdns_minimal [NOTFOUND=return] resolve/',
+        # Quoted since install_dependencies runs this through `sh -c "..."`
+        "'s/mymachines resolve/mymachines mdns_minimal [NOTFOUND=return] resolve/'",
         '/etc/nsswitch.conf', '&&',
         superuser_command, "locale-gen", '&&',
         superuser_command, "systemctl", "enable", "--now", "avahi-daemon", "&&",
@@ -818,7 +819,7 @@ def preinstall_dependencies(superuser_command: str):
     command = []
     logging.debug("Performing pre-install dependencies…")
     os_name, _ = get_os()
-    if os_name == "Steam":
+    if os_name == "steamos":
         command = preinstall_dependencies_steamos(superuser_command)
     else:
         logging.debug("No pre-install dependencies required.")
@@ -829,7 +830,7 @@ def postinstall_dependencies(superuser_command: str):
     command = []
     logging.debug("Performing post-install dependencies…")
     os_name, _ = get_os()
-    if os_name == "Steam":
+    if os_name == "steamos":
         command = postinstall_dependencies_steamos(superuser_command)
     elif os_name == "alpine":
         command = postinstall_dependencies_alpine(superuser_command)
