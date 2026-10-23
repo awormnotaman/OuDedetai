@@ -955,7 +955,8 @@ def install_dependencies(app: App, target_version=10):
     if not install_deps_failed:
         try:
             logging.debug(f"Attempting to run this command: {command_str}")
-            run_command(command_str, shell=True)
+            if run_command(command_str, shell=True) is None:
+                install_deps_failed = True
         except subprocess.CalledProcessError as e:
             if e.returncode == 127:
                 logging.error("User cancelled dependency installation.")
@@ -963,6 +964,14 @@ def install_dependencies(app: App, target_version=10):
                 logging.error(f"An error occurred in install_dependencies(): {e}")
                 logging.error(f"Command output: {e.output}")
             install_deps_failed = True
+
+    if install_deps_failed:
+        # Carrying on would only fail later with a less helpful error
+        app.exit(
+            "Failed to install the system dependencies. See the log for details, or install "
+            f"them yourself ({constants.WIKI_LINK}/System-Dependencies) and run again with "
+            "--skip-dependencies."
+        )
 
 
     if reboot_required:
