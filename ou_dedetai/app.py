@@ -87,7 +87,7 @@ class App(abc.ABC):
             # Also do a case insensitive match, no reason to fail due to casing
             if answer.lower() in simple_options_lower:
                 # Return the correct casing to simplify the parsing of the ask result
-                return simple_options[simple_options.index(answer.lower())]
+                return simple_options[simple_options_lower.index(answer.lower())]
             
             # Now check the special cases
             if PROMPT_OPTION_FILE in options and Path(answer).is_file():
