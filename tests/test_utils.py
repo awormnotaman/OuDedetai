@@ -1,8 +1,9 @@
+import os
 import queue
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from packaging.version import InvalidVersion
@@ -149,9 +150,39 @@ class TestGeneralUtils(unittest.TestCase):
         # TODO: Need to add test for v1 appimage.
         self.assertTrue(utils.check_appimage(self.tiny_appimage))
 
-    @unittest.skip("Not testing simple shell command.")
     def test_clean_all(self):
-        pass
+        with tempfile.TemporaryDirectory() as td:
+            # A space in the path used to split the unquoted shell rm command
+            workdir = Path(td) / 'my dir'
+            workdir.mkdir()
+            (workdir / 'wget-log').touch()
+            (workdir / 'wget-log.1').touch()
+            (workdir / 'wget-log.2').symlink_to(td)
+            (workdir / 'wget-log.d').mkdir()
+            (workdir / 'keep.txt').touch()
+            cwd = os.getcwd()
+            os.chdir(workdir)
+            try:
+                utils.clean_all()
+            finally:
+                os.chdir(cwd)
+            remaining = sorted(p.name for p in workdir.iterdir())
+        # Like `rm -f`: files and links are removed, directories are left alone
+        self.assertEqual(remaining, ['keep.txt', 'wget-log.d'])
+
+    @unittest.skipIf(os.geteuid() == 0, "root can delete from read-only dirs")
+    def test_clean_all_ignores_undeletable_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            (workdir / 'wget-log').touch()
+            workdir.chmod(0o500)
+            cwd = os.getcwd()
+            os.chdir(workdir)
+            try:
+                utils.clean_all()
+            finally:
+                os.chdir(cwd)
+                workdir.chmod(0o700)
 
     def test_delete_symlink_exists(self):
         new_symlink = Path('symlink')
@@ -243,9 +274,21 @@ class TestGeneralUtils(unittest.TestCase):
     def test_get_latest_folder(self):
         pass
 
-    @unittest.skip("Must be tested on actual oudedetai binary.")
+    @patch.object(constants, 'RUNMODE', 'binary')
+    @patch.dict(os.environ, {
+        'LD_LIBRARY_PATH': '/pyinstaller/bundle',
+        'LD_LIBRARY_PATH_ORIG': '/usr/local/lib',
+    })
     def test_get_lli_release_version(self):
-        pass
+        with tempfile.TemporaryDirectory() as td:
+            fake_lli = Path(td) / 'oudedetai'
+            fake_lli.write_text(
+                '#!/bin/sh\n'
+                '[ "$LD_LIBRARY_PATH" = /usr/local/lib ] || exit 1\n'
+                'echo "Ou Dedetai, 4.0.0-beta.15 by FaithLife Community"\n'
+            )
+            fake_lli.chmod(0o755)
+            self.assertEqual(utils.get_lli_release_version(fake_lli), '4.0.0-beta.15')
 
     def test_get_path_size_exists(self):
         cmd = ['du', '-sb', TESTDATADIR]

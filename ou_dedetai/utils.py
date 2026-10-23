@@ -79,7 +79,12 @@ def restart_lli():
 
 def clean_all():
     logging.info("Cleaning all temp files…")
-    os.system(f"rm -f {os.getcwd()}/wget-log*")
+    for wget_log in Path.cwd().glob("wget-log*"):
+        try:
+            wget_log.unlink()
+        except OSError as e:
+            # Best effort, like `rm -f`
+            logging.debug(f"Failed to remove {wget_log}: {e}")
     logging.info("done")
 
 
@@ -368,7 +373,7 @@ def get_lli_release_version(lli_binary):
     os.chmod(lli_binary, mode=st.st_mode | stat.S_IXUSR)
     # Get version number.
     cmd = [lli_binary, '--version']
-    vstr = subprocess.check_output(cmd, text=True)
+    vstr = subprocess.check_output(cmd, text=True, env=system.fix_ld_library_path(None))
     m = re.search(r'\d+\.\d+\.\d+(-[a-z]+\.\d+)?', vstr)
     if m:
         lli_version = m[0]
