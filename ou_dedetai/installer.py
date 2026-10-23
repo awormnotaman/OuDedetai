@@ -408,10 +408,17 @@ def ensure_launcher_executable(app: App):
     ensure_config_file(app=app)
     app.installer_step += 1
     if constants.RUNMODE == 'binary':
-        app.status(f"Copying launcher to {app.conf.install_dir}…")
-
         # Copy executable into install dir.
         launcher_exe = Path(f"{app.conf.install_dir}/{constants.BINARY_NAME}")
+        if (
+            not launcher_exe.is_symlink()
+            and launcher_exe.resolve() == Path(sys.executable).resolve()
+        ):
+            # We're running the launcher itself (from its shortcut, or a symlink to it).
+            # It's already in place, and removing it would delete the copy's source.
+            logging.debug(f"Already running from {launcher_exe}, skipping copy.")
+            return
+        app.status(f"Copying launcher to {app.conf.install_dir}…")
         if launcher_exe.is_file():
             logging.debug("Removing existing launcher binary.")
             launcher_exe.unlink()
