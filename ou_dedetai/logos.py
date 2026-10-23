@@ -303,6 +303,7 @@ class LogosManager:
     def index(self):
         self.indexing_state = State.STARTING
         index_finished = threading.Event()
+        index_failed_to_start = threading.Event()
 
         def run_indexing():
             if not self.app.conf.logos_indexer_exe_windows_path:
@@ -316,10 +317,17 @@ class LogosManager:
                 self.processes[self.app.conf.logos_indexer_exe_windows_path] = process
 
         def check_if_indexing(process: threading.Thread):
+            # That thread only starts the indexer, so wait on the indexer itself
+            process.join()
+            indexer_path = self.app.conf.logos_indexer_exe_windows_path
+            indexer = self.processes.get(indexer_path) if indexer_path else None
+            if indexer is None:
+                index_failed_to_start.set()
             start_time = time.time()
             last_time = start_time
             update_send = 0
-            while process.is_alive():
+            while indexer is not None and indexer.poll() is None:
+                time.sleep(1)
                 update, last_time = utils.stopwatch(last_time, 3)
                 if update:
                     update_send = update_send + 1
@@ -335,7 +343,10 @@ class LogosManager:
         def wait_on_indexing():
             index_finished.wait()
             self.indexing_state = State.STOPPED
-            self.app.status("Indexing has finished.", percent=100)
+            if index_failed_to_start.is_set():
+                self.app.status("Indexing failed to start, see the log for details.")
+            else:
+                self.app.status("Indexing has finished.", percent=100)
             wine.wineserver_wait(app=self.app)
 
         wine.wineserver_kill(self.app)
